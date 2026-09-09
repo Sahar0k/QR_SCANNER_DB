@@ -32,7 +32,7 @@ export class TerminalBridge {
     // Periodically check terminal online/offline status (every 2s)
     if (!this.heartbeatInterval) {
       this.heartbeatInterval = setInterval(() => {
-        this.checkTerminalStatus();
+        void this.checkTerminalStatus();
       }, 2000);
     }
   }
@@ -48,7 +48,7 @@ export class TerminalBridge {
       });
 
       this.udpSocket.on('message', (msg, rinfo) => {
-        this.handleRawUdpBuffer(msg, rinfo.address);
+        void this.handleRawUdpBuffer(msg, rinfo.address);
       });
 
       this.udpSocket.on('listening', () => {
@@ -82,21 +82,21 @@ export class TerminalBridge {
     }
   }
 
-  public handleRawUdpBuffer(buffer: Buffer, remoteIp = '127.0.0.1'): TerminalEventPayload | null {
+  public async handleRawUdpBuffer(buffer: Buffer, remoteIp = '127.0.0.1'): Promise<TerminalEventPayload | null> {
     const rawText = this.decodeBuffer(buffer).trim();
     return this.processPacket(rawText, remoteIp);
   }
 
-  public processPacket(rawText: string, remoteIp = '127.0.0.1'): TerminalEventPayload | null {
+  public async processPacket(rawText: string, remoteIp = '127.0.0.1'): Promise<TerminalEventPayload | null> {
     const now = Date.now();
-    const settings = db.getSettings();
+    const settings = await db.getSettings();
 
     let event: TerminalEventPayload;
 
     if (rawText.startsWith('HEARTBEAT:')) {
       const rssiStr = rawText.substring('HEARTBEAT:'.length).trim();
       const rssi = parseInt(rssiStr, 10) || -60;
-      db.recordTerminalHeartbeat(rssi, remoteIp);
+      await db.recordTerminalHeartbeat(rssi, remoteIp);
 
       event = {
         type: 'HEARTBEAT',
@@ -212,8 +212,8 @@ export class TerminalBridge {
     });
   }
 
-  private checkTerminalStatus() {
-    const terminals = db.getTerminals();
+  private async checkTerminalStatus() {
+    const terminals = await db.getTerminals();
     const primary = terminals[0];
     if (primary) {
       this.broadcast({
@@ -226,12 +226,12 @@ export class TerminalBridge {
     }
   }
 
-  public getStatus() {
+  public async getStatus() {
     return {
       isListeningUdp: this.isListeningUdp,
       port: this.port,
       activeWsClients: this.wss ? this.wss.clients.size : 0,
-      terminals: db.getTerminals()
+      terminals: await db.getTerminals()
     };
   }
 

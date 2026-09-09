@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { KeyRound, ShieldCheck, X, Check, Lock, ArrowRight, UserCheck, Shield } from 'lucide-react';
-import { User, Role } from '../types.js';
+import { KeyRound, X, Check, Lock, UserCheck } from 'lucide-react';
+import { User } from '../types.js';
 
 interface LoginModalProps {
   isOpen: boolean;
@@ -13,7 +13,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
   onClose,
   onLoginSuccess
 }) => {
-  const [selectedRole, setSelectedRole] = useState<Role>('metrologist');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -29,7 +28,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password, role: selectedRole })
+        body: JSON.stringify({ password })
       });
       const data = await res.json();
 
@@ -46,15 +45,6 @@ export const LoginModal: React.FC<LoginModalProps> = ({
     }
   };
 
-  const handleQuickLogin = (role: Role) => {
-    const defaultUser: User = role === 'admin' 
-      ? { id: 'usr-4', username: 'admin', fullName: 'Администратор системы', role: 'admin' }
-      : { id: 'usr-2', username: 'metrologist', fullName: 'Кузнецова Е.П. (Метролог ОГМ)', role: 'metrologist' };
-    
-    onLoginSuccess(defaultUser);
-    onClose();
-  };
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-xs p-4">
       <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-150 text-slate-100">
@@ -69,7 +59,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 Авторизация в системе СИ
               </h3>
               <p className="text-[11px] text-slate-400">
-                Выберите роль для входа в рабочий режим
+                Вход в рабочий режим метролога
               </p>
             </div>
           </div>
@@ -87,33 +77,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             💡 <span className="font-semibold text-slate-200">Публичный доступ (Гость):</span> любой сотрудник может зайти на сайт, найти нужный прибор и проверить его статус. Для выполнения операций войдите ниже.
           </div>
 
-          {/* Role selector tabs */}
-          <div className="grid grid-cols-2 gap-2 p-1 bg-slate-950 border border-slate-800 rounded-xl">
-            <button
-              type="button"
-              onClick={() => { setSelectedRole('metrologist'); setPassword(''); setError(null); }}
-              className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                selectedRole === 'metrologist'
-                  ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 shadow-xs'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
-              }`}
-            >
-              <UserCheck className="w-4 h-4 text-cyan-400" />
-              <span>Метролог</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => { setSelectedRole('admin'); setPassword(''); setError(null); }}
-              className={`flex items-center justify-center gap-2 py-2.5 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
-                selectedRole === 'admin'
-                  ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40 shadow-xs'
-                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
-              }`}
-            >
-              <Shield className="w-4 h-4 text-purple-400" />
-              <span>Администратор</span>
-            </button>
+          <div className="flex items-center gap-2 bg-cyan-500/10 border border-cyan-500/20 rounded-xl p-3 text-xs text-cyan-200">
+            <UserCheck className="w-4 h-4 text-cyan-400" />
+            <span>Обычный вход разрешён только метрологам.</span>
           </div>
 
           {error && (
@@ -124,7 +90,7 @@ export const LoginModal: React.FC<LoginModalProps> = ({
 
           <div>
             <label className="text-xs text-slate-300 block mb-1 font-medium">
-              Пароль ({selectedRole === 'admin' ? 'Администратора' : 'Метролога'})
+              Пароль метролога
             </label>
             <div className="relative">
               <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -132,12 +98,12 @@ export const LoginModal: React.FC<LoginModalProps> = ({
                 type="password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder={selectedRole === 'admin' ? 'Введите admin' : 'Введите metrolog'}
+                placeholder="Введите пароль метролога"
                 className="w-full bg-slate-800 border border-slate-700 rounded-xl pl-9.5 pr-4 py-2.5 text-xs text-slate-200 focus:outline-none focus:border-cyan-400 font-mono"
               />
             </div>
             <span className="text-[10px] text-slate-500 mt-1 block">
-              Подсказка: пароль для метролога <code className="text-cyan-400 font-mono">metrolog</code>, для админа <code className="text-purple-400 font-mono">admin</code>.
+              Пароль задаётся переменной <code className="text-cyan-400 font-mono">METROLOGIST_PASSWORD</code> на сервере.
             </span>
           </div>
 
@@ -145,24 +111,12 @@ export const LoginModal: React.FC<LoginModalProps> = ({
             <button
               type="submit"
               disabled={loading}
-              className={`w-full text-white font-semibold text-xs py-2.5 rounded-xl shadow-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                selectedRole === 'admin'
-                  ? 'bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 shadow-purple-500/20'
-                  : 'bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 shadow-cyan-500/20'
-              }`}
+              className="w-full text-white font-semibold text-xs py-2.5 rounded-xl shadow-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 shadow-cyan-500/20"
             >
               <Check className="w-4 h-4" />
-              {loading ? 'Проверка...' : `Войти как ${selectedRole === 'admin' ? 'Администратор' : 'Метролог'}`}
+              {loading ? 'Проверка...' : 'Войти как метролог'}
             </button>
 
-            <button
-              type="button"
-              onClick={() => handleQuickLogin(selectedRole)}
-              className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs py-2 rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer border border-slate-700"
-            >
-              <span>Быстрый вход ({selectedRole === 'admin' ? 'Админ' : 'Метролог'})</span>
-              <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
-            </button>
           </div>
         </form>
       </div>

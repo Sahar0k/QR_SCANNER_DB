@@ -17,21 +17,41 @@ import { SystemSettings, User } from '../types.js';
 interface SettingsViewProps {
   currentUser: User;
   onSettingsSaved?: () => void;
+  engineeringToken: string | null;
 }
 
 export const SettingsView: React.FC<SettingsViewProps> = ({
   currentUser,
-  onSettingsSaved
+  onSettingsSaved,
+  engineeringToken
 }) => {
   const [settings, setSettings] = useState<SystemSettings | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [savedMsg, setSavedMsg] = useState<string | null>(null);
   const [resetMsg, setResetMsg] = useState<string | null>(null);
 
+  const handleExportBackup = async () => {
+    try {
+      const res = await fetch('/api/database/backup', {
+        headers: { 'x-engineering-token': engineeringToken || '' },
+      });
+      if (!res.ok) throw new Error('Сервер отклонил выгрузку резервной копии');
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `metrology_backup_${new Date().toISOString().slice(0, 10)}.json`;
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert(`Ошибка выгрузки резервной копии: ${err.message}`);
+    }
+  };
+
   const fetchSettings = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/settings');
+      const res = await fetch('/api/settings', { headers: { 'x-engineering-token': engineeringToken || '' } });
       const data: SystemSettings = await res.json();
       setSettings(data);
     } catch (err) {
@@ -52,7 +72,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     try {
       await fetch('/api/settings', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-engineering-token': engineeringToken || '' },
         body: JSON.stringify(settings)
       });
       setSavedMsg('Настройки системы успешно сохранены!');
@@ -69,7 +89,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
 
     try {
-      const res = await fetch('/api/database/reset', { method: 'POST' });
+      const res = await fetch('/api/database/reset', { method: 'POST', headers: { 'x-engineering-token': engineeringToken || '' } });
       const data = await res.json();
       setResetMsg('База данных успешно сброшена к исходным эталонным данным!');
       setTimeout(() => setResetMsg(null), 4000);
@@ -89,7 +109,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
       const res = await fetch('/api/database/restore', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-engineering-token': engineeringToken || '' },
         body: JSON.stringify(parsed)
       });
       const data = await res.json();
@@ -291,14 +311,15 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         </p>
 
         <div className="flex flex-wrap items-center gap-3 pt-1">
-          <a
+          <button
             id="download-backup-btn"
-            href="/api/database/backup"
+            type="button"
+            onClick={handleExportBackup}
             className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-4 py-2.5 rounded-xl font-medium transition-all flex items-center gap-2"
           >
             <Download className="w-4 h-4 text-cyan-400" />
             Выгрузить дамп базы (JSON)
-          </a>
+          </button>
 
           <label className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 px-4 py-2.5 rounded-xl font-medium transition-all flex items-center gap-2 cursor-pointer">
             <Upload className="w-4 h-4 text-emerald-400" />

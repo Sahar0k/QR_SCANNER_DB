@@ -11,30 +11,32 @@ export interface TestResult {
   details?: string;
 }
 
-export function runBusinessRulesTests(): {
+export async function runBusinessRulesTests(): Promise<{
   total: number;
   passed: number;
   failed: number;
   results: TestResult[];
   executedAt: string;
-} {
+}> {
   const results: TestResult[] = [];
-  const testDb = new Database();
+  const testUrl = process.env.TEST_DATABASE_URL || (process.env.NODE_ENV === 'test' ? process.env.DATABASE_URL : undefined);
+  if (!testUrl) throw new Error('TEST_DATABASE_URL is required to run acceptance tests; refusing to reset the application database.');
+  const testDb = new Database({ connectionString: testUrl });
   // Reset isolated test instance to clean seed
-  testDb.resetToSeed();
+  await testDb.resetToSeed();
 
   // Test 1: Выдача исправного прибора сотруднику с правом
   {
     const start = Date.now();
     // DEV:00101 (Rohde & Schwarz FSL6) is in_stock, verification ok
     // CARD:0004928192 (Иванов А.А.) has canBorrow = true
-    const res = testDb.issueDevice({
+    const res = await testDb.issueDevice({
       deviceBarcodeOrId: 'DEV:00101',
       employeeBadgeOrId: 'CARD:0004928192',
       operatorName: 'Тестовый оператор'
     });
-    const dev = testDb.getDeviceByBarcode('DEV:00101');
-    const movements = testDb.getMovements({ deviceId: dev?.id, action: 'issued' });
+    const dev = await testDb.getDeviceByBarcode('DEV:00101');
+    const movements = await testDb.getMovements({ deviceId: dev?.id, action: 'issued' });
 
     const passed = res.success === true && dev?.status === 'issued' && dev.currentHolderId === 'emp-1' && movements.length > 0;
     results.push({
@@ -52,12 +54,12 @@ export function runBusinessRulesTests(): {
   {
     const start = Date.now();
     // DEV:00104 (Fluke 8846A) has verification expired 10 days ago!
-    const res = testDb.issueDevice({
+    const res = await testDb.issueDevice({
       deviceBarcodeOrId: 'DEV:00104',
       employeeBadgeOrId: 'CARD:0004928192',
       operatorName: 'Тестовый оператор'
     });
-    const dev = testDb.getDeviceByBarcode('DEV:00104');
+    const dev = await testDb.getDeviceByBarcode('DEV:00104');
     const passed = res.success === false && res.message.includes('Поверка прибора') && dev?.status === 'in_stock';
     results.push({
       id: 'test-02',
@@ -74,7 +76,7 @@ export function runBusinessRulesTests(): {
   {
     const start = Date.now();
     // DEV:00102 (Keysight E36313A) is already 'issued'
-    const res = testDb.issueDevice({
+    const res = await testDb.issueDevice({
       deviceBarcodeOrId: 'DEV:00102',
       employeeBadgeOrId: 'CARD:0005118274',
       operatorName: 'Тестовый оператор'
@@ -95,7 +97,7 @@ export function runBusinessRulesTests(): {
   {
     const start = Date.now();
     // CARD:0007829104 (Новиков Д.И., стажер) has canBorrow = false
-    const res = testDb.issueDevice({
+    const res = await testDb.issueDevice({
       deviceBarcodeOrId: 'DEV:00103', // Tektronix, in_stock
       employeeBadgeOrId: 'CARD:0007829104',
       operatorName: 'Тестовый оператор'
@@ -117,14 +119,14 @@ export function runBusinessRulesTests(): {
     const start = Date.now();
     // DEV:00102 was initially borrowed by Ivanov (emp-1).
     // Now returned by Smirnov (emp-2)
-    const res = testDb.returnDevice({
+    const res = await testDb.returnDevice({
       deviceBarcodeOrId: 'DEV:00102',
       actualReturnerBadgeOrId: 'CARD:0005118274', // Smirnov
       operatorName: 'Тестовый оператор',
       notes: 'Стендовая работа завершена'
     });
-    const dev = testDb.getDeviceByBarcode('DEV:00102');
-    const movements = testDb.getMovements({ deviceId: dev?.id, action: 'returned' });
+    const dev = await testDb.getDeviceByBarcode('DEV:00102');
+    const movements = await testDb.getMovements({ deviceId: dev?.id, action: 'returned' });
     const lastMov = movements[0];
 
     const passed = res.success === true && 
@@ -146,8 +148,8 @@ export function runBusinessRulesTests(): {
   // Test 6: Неизменяемость журнала движений (Append-Only)
   {
     const start = Date.now();
-    const beforeCount = testDb.getMovements().length;
-    testDb.addMovement({
+    const beforeCount = (await testDb.getMovements()).length;
+    await testDb.addMovement({
       deviceId: 'dev-1',
       deviceName: 'Анализатор спектра Rohde & Schwarz FSL6',
       deviceBarcode: 'DEV:00101',
@@ -155,7 +157,7 @@ export function runBusinessRulesTests(): {
       operator: 'Тестовый оператор',
       notes: 'Тестовое перемещение'
     });
-    const afterCount = testDb.getMovements().length;
+    const afterCount = (await testDb.getMovements()).length;
     const passed = afterCount === beforeCount + 1;
     results.push({
       id: 'test-06',
@@ -171,13 +173,11 @@ export function runBusinessRulesTests(): {
   // Test 7: Определение оффлайн-статуса терминала по таймауту 6 секунд
   {
     const start = Date.now();
-    const terminals = testDb.getTerminals();
+    const terminals = await testDb.getTerminals();
     const term = terminals[0];
     // Set last heartbeat to 10 seconds ago
-    term.lastHeartbeat = new Date(Date.now() - 10000).toISOString();
-    testDb.save();
-
-    const updatedTerminals = testDb.getTerminals();
+    await testDb.setTerminalLastHeartbeatForTests(new Date(Date.now() - 10000).toISOString());
+    const updatedTerminals = await testDb.getTerminals();
     const updatedTerm = updatedTerminals[0];
     const passed = updatedTerm.status === 'offline';
 
@@ -195,17 +195,17 @@ export function runBusinessRulesTests(): {
   // Test 8: Инвентаризация — корректность диф-отчёта при пропуске прибора
   {
     const start = Date.now();
-    const session = testDb.createInventorySession({
+    const session = await testDb.createInventorySession({
       title: 'Тестовая инвентаризация',
       operator: 'Аудитор'
     });
 
     // Scan all devices EXCEPT DEV:00103 (Tektronix), and also scan one extra non-existent code DEV:EXTRA999
-    testDb.scanInventoryItem(session.id, 'DEV:00101', 'Аудитор');
-    testDb.scanInventoryItem(session.id, 'DEV:00102', 'Аудитор');
-    testDb.scanInventoryItem(session.id, 'DEV:EXTRA999', 'Аудитор'); // extra!
+    await testDb.scanInventoryItem(session.id, 'DEV:00101', 'Аудитор');
+    await testDb.scanInventoryItem(session.id, 'DEV:00102', 'Аудитор');
+    await testDb.scanInventoryItem(session.id, 'DEV:EXTRA999', 'Аудитор'); // extra!
 
-    const sessionData = testDb.getInventorySessionById(session.id);
+    const sessionData = await testDb.getInventorySessionById(session.id);
     const s = sessionData?.session;
     const items = sessionData?.items || [];
 
@@ -226,7 +226,7 @@ export function runBusinessRulesTests(): {
   }
 
   // Restore main db from file
-  testDb.resetToSeed();
+  await testDb.resetToSeed();
 
   return {
     total: results.length,
