@@ -1,0 +1,6 @@
+{
+  "name": "Учёт средств измерений (СИ)",
+  "description": "Система учёта средств измерений с поддержкой аппаратного сканера ESP32-S3, контролем поверки, выдачей/возвратом и инвентаризацией",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
