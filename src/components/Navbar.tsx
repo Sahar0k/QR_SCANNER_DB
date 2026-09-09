@@ -41,6 +41,7 @@ interface NavbarProps {
   onOpenSimulator: () => void;
   theme: 'dark' | 'light';
   onToggleTheme: () => void;
+  engineeringUnlocked: boolean;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -53,7 +54,8 @@ export const Navbar: React.FC<NavbarProps> = ({
   terminal,
   onOpenSimulator,
   theme,
-  onToggleTheme
+  onToggleTheme,
+  engineeringUnlocked
 }) => {
   const isOnline = terminal?.status === 'online';
 
@@ -65,7 +67,7 @@ export const Navbar: React.FC<NavbarProps> = ({
     { id: 'movements', label: 'Журнал выдачи', icon: History },
     { id: 'reports', label: 'Отчёты', icon: BarChart3 },
     { id: 'terminal', label: 'Терминал сканеров', icon: Cpu },
-    { id: 'settings', label: 'Настройки', icon: Settings }
+    ...(engineeringUnlocked ? [{ id: 'settings' as TabType, label: 'Инженерное меню', icon: Settings }] : [])
   ];
 
   const isDark = theme === 'dark';

@@ -46,11 +46,13 @@ export function App() {
     return localStorage.getItem('metrology_logged_in') === 'true';
   });
   const [isLoginModalOpen, setIsLoginModalOpen] = useState<boolean>(false);
+  const [engineeringToken, setEngineeringToken] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<User>(() => {
     const saved = localStorage.getItem('metrology_user');
     if (saved) {
       try {
-        return JSON.parse(saved);
+        const parsed = JSON.parse(saved);
+        return parsed.role === 'metrologist' ? parsed : GUEST_USER;
       } catch {
         return GUEST_USER;
       }
@@ -70,15 +72,38 @@ export function App() {
     setCurrentUser(GUEST_USER);
     localStorage.removeItem('metrology_logged_in');
     localStorage.removeItem('metrology_user');
+    setEngineeringToken(null);
     setActiveTab('devices');
   };
 
+  useEffect(() => {
+    const openEngineeringMenu = async (event: KeyboardEvent) => {
+      if (!event.ctrlKey || !event.shiftKey || event.key.toLowerCase() !== 'e') return;
+      const password = window.prompt('Инженерное меню. Введите инженерный пароль:');
+      if (!password) return;
+      const response = await fetch('/api/auth/engineering', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ combination: 'CTRL_SHIFT_E', password }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) {
+        window.alert(data.error || 'Инженерная авторизация отклонена');
+        return;
+      }
+      setEngineeringToken(data.token);
+      setActiveTab('settings');
+    };
+    window.addEventListener('keydown', openEngineeringMenu);
+    return () => window.removeEventListener('keydown', openEngineeringMenu);
+  }, []);
+
   // Enforce devices tab for guests
   useEffect(() => {
-    if (!isLoggedIn && activeTab !== 'devices') {
+    if ((!isLoggedIn || (activeTab === 'settings' && !engineeringToken)) && activeTab !== 'devices') {
       setActiveTab('devices');
     }
-  }, [isLoggedIn, activeTab]);
+  }, [isLoggedIn, activeTab, engineeringToken]);
 
   // Terminal state
   const [terminal, setTerminal] = useState<Terminal | null>(null);
@@ -222,6 +247,7 @@ export function App() {
         onLogout={handleLogout}
         terminal={terminal}
         onOpenSimulator={() => setIsSimulatorOpen(true)}
+        engineeringUnlocked={Boolean(engineeringToken)}
         theme={theme}
         onToggleTheme={toggleTheme}
       />
@@ -291,6 +317,7 @@ export function App() {
             currentUser={currentUser}
             isLoggedIn={isLoggedIn}
             onSettingsSaved={fetchSummary}
+            engineeringToken={engineeringToken}
           />
         )}
       </main>

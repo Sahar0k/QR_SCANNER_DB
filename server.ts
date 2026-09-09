@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import http from 'http';
 import path from 'path';
@@ -10,28 +11,33 @@ import { runBusinessRulesTests } from './server/tests.js';
 async function startServer() {
   const app = express();
   const PORT = 3000;
+  const metrologistPassword = process.env.METROLOGIST_PASSWORD || 'metrolog';
+  const engineeringPassword = process.env.ENGINEERING_PASSWORD;
+  const engineeringCombination = process.env.ENGINEERING_COMBINATION || 'CTRL_SHIFT_E';
+  const metrologistToken = `metrologist-${Math.random().toString(36).slice(2)}`;
+  const engineeringToken = `engineering-${Math.random().toString(36).slice(2)}`;
   const server = http.createServer(app);
 
   // Setup WebSocket server on path /ws
   const wss = new WebSocketServer({ server, path: '/ws' });
   terminalBridge.attachWebSocketServer(wss);
 
-  wss.on('connection', (ws) => {
+  wss.on('connection', async (ws) => {
     // Send initial handshake and terminal status
-    const terminals = db.getTerminals();
+    const terminals = await db.getTerminals();
     ws.send(JSON.stringify({
       type: 'INIT',
       payload: {
         terminals,
-        settings: db.getSettings()
+        settings: await db.getSettings()
       }
     }));
 
-    ws.on('message', (message) => {
+    ws.on('message', async (message) => {
       try {
         const data = JSON.parse(message.toString());
         if (data.type === 'SIMULATE_PACKET') {
-          terminalBridge.processPacket(data.raw, data.remoteIp || '127.0.0.1');
+          await terminalBridge.processPacket(data.raw, data.remoteIp || '127.0.0.1');
         }
       } catch (err) {
         console.error('WS message parse error:', err);
@@ -40,7 +46,7 @@ async function startServer() {
   });
 
   // Start UDP server for ESP32-S3 terminal
-  terminalBridge.startUdpServer(db.getSettings().udpPort || 5005);
+  terminalBridge.startUdpServer((await db.getSettings()).udpPort || 5005);
 
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true }));
@@ -59,14 +65,14 @@ async function startServer() {
   });
 
   // Users & Auth
-  app.get('/api/users', (req, res) => {
-    res.json(db.getUsers());
+  app.get('/api/users', async (req, res) => {
+    res.json(await db.getUsers());
   });
 
   // Dashboard summary
-  app.get('/api/dashboard/summary', (req, res) => {
+  app.get('/api/dashboard/summary', async (req, res) => {
     try {
-      const summary = db.getDashboardSummary();
+      const summary = await db.getDashboardSummary();
       res.json(summary);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -74,13 +80,13 @@ async function startServer() {
   });
 
   // Code inspection / validation (for scanner Master wizard)
-  app.post('/api/operations/validate-code', (req, res) => {
+  app.post('/api/operations/validate-code', async (req, res) => {
     const { code } = req.body;
     if (!code) return res.status(400).json({ error: 'Код не передан' });
 
     const clean = String(code).trim();
-    const employee = db.getEmployeeByBadge(clean);
-    const device = db.getDeviceByBarcode(clean);
+    const employee = await db.getEmployeeByBadge(clean);
+    const device = await db.getDeviceByBarcode(clean);
 
     if (employee) {
       return res.json({
@@ -113,9 +119,9 @@ async function startServer() {
   });
 
   // Issue operation
-  app.post('/api/operations/issue', (req, res) => {
+  app.post('/api/operations/issue', async (req, res) => {
     const { deviceBarcodeOrId, employeeBadgeOrId, operatorName, expectedReturnDate, notes } = req.body;
-    const result = db.issueDevice({
+    const result = await db.issueDevice({
       deviceBarcodeOrId,
       employeeBadgeOrId,
       operatorName,
@@ -138,9 +144,9 @@ async function startServer() {
   });
 
   // Return operation
-  app.post('/api/operations/return', (req, res) => {
+  app.post('/api/operations/return', async (req, res) => {
     const { deviceBarcodeOrId, actualReturnerBadgeOrId, operatorName, notes, newLocation } = req.body;
-    const result = db.returnDevice({
+    const result = await db.returnDevice({
       deviceBarcodeOrId,
       actualReturnerBadgeOrId,
       operatorName,
@@ -162,9 +168,9 @@ async function startServer() {
   });
 
   // Devices CRUD
-  app.get('/api/devices', (req, res) => {
+  app.get('/api/devices', async (req, res) => {
     const { status, search, location } = req.query;
-    let list = db.getDevices();
+    let list = await db.getDevices();
 
     if (status && status !== 'all') {
       list = list.filter(d => d.status === status);
@@ -187,36 +193,36 @@ async function startServer() {
     res.json(list);
   });
 
-  app.get('/api/devices/:id', (req, res) => {
-    const dev = db.getDeviceById(req.params.id);
+  app.get('/api/devices/:id', async (req, res) => {
+    const dev = await db.getDeviceById(req.params.id);
     if (!dev) return res.status(404).json({ error: 'Прибор не найден' });
     res.json(dev);
   });
 
-  app.post('/api/devices', (req, res) => {
+  app.post('/api/devices', async (req, res) => {
     try {
-      const newDev = db.createDevice(req.body);
+      const newDev = await db.createDevice(req.body);
       res.status(201).json(newDev);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
   });
 
-  app.put('/api/devices/:id', (req, res) => {
-    const updated = db.updateDevice(req.params.id, req.body);
+  app.put('/api/devices/:id', async (req, res) => {
+    const updated = await db.updateDevice(req.params.id, req.body);
     if (!updated) return res.status(404).json({ error: 'Прибор не найден' });
     res.json(updated);
   });
 
-  app.delete('/api/devices/:id', (req, res) => {
-    const success = db.deleteDevice(req.params.id);
+  app.delete('/api/devices/:id', async (req, res) => {
+    const success = await db.deleteDevice(req.params.id);
     if (!success) return res.status(404).json({ error: 'Прибор не найден' });
     res.json({ success: true });
   });
 
   // Export devices as CSV
-  app.get('/api/devices/export/csv', (req, res) => {
-    const list = db.getDevices();
+  app.get('/api/devices/export/csv', async (req, res) => {
+    const list = await db.getDevices();
     const headers = ['ID', 'Штрихкод', 'Наименование', 'Модель', 'Зав. №', 'Инв. №', 'Статус', 'Местоположение', 'Дата след. поверки', 'Текущий держатель', 'Примечания'];
     const rows = list.map(d => [
       d.id,
@@ -239,7 +245,7 @@ async function startServer() {
   });
 
   // Import devices from CSV/JSON
-  app.post('/api/devices/import', (req, res) => {
+  app.post('/api/devices/import', async (req, res) => {
     try {
       const items: any[] = req.body.items;
       if (!Array.isArray(items)) {
@@ -247,9 +253,9 @@ async function startServer() {
       }
 
       let imported = 0;
-      items.forEach(item => {
+      for (const item of items) {
         if (item.name && item.barcode && item.inventoryNumber) {
-          db.createDevice({
+          await db.createDevice({
             barcode: item.barcode,
             name: item.name,
             model: item.model || 'Н/Д',
@@ -263,7 +269,7 @@ async function startServer() {
           });
           imported++;
         }
-      });
+      }
 
       res.json({ success: true, count: imported });
     } catch (err: any) {
@@ -272,71 +278,71 @@ async function startServer() {
   });
 
   // Employees CRUD
-  app.get('/api/employees', (req, res) => {
-    res.json(db.getEmployees());
+  app.get('/api/employees', async (req, res) => {
+    res.json(await db.getEmployees());
   });
 
-  app.get('/api/employees/:id', (req, res) => {
-    const emp = db.getEmployeeById(req.params.id);
+  app.get('/api/employees/:id', async (req, res) => {
+    const emp = await db.getEmployeeById(req.params.id);
     if (!emp) return res.status(404).json({ error: 'Сотрудник не найден' });
     res.json(emp);
   });
 
-  app.post('/api/employees', (req, res) => {
+  app.post('/api/employees', async (req, res) => {
     try {
-      const newEmp = db.createEmployee(req.body);
+      const newEmp = await db.createEmployee(req.body);
       res.status(201).json(newEmp);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
   });
 
-  app.put('/api/employees/:id', (req, res) => {
-    const updated = db.updateEmployee(req.params.id, req.body);
+  app.put('/api/employees/:id', async (req, res) => {
+    const updated = await db.updateEmployee(req.params.id, req.body);
     if (!updated) return res.status(404).json({ error: 'Сотрудник не найден' });
     res.json(updated);
   });
 
-  app.delete('/api/employees/:id', (req, res) => {
-    const success = db.deleteEmployee(req.params.id);
+  app.delete('/api/employees/:id', async (req, res) => {
+    const success = await db.deleteEmployee(req.params.id);
     if (!success) return res.status(404).json({ error: 'Сотрудник не найден' });
     res.json({ success: true });
   });
 
   // Departments API
-  app.get('/api/departments', (req, res) => {
-    res.json(db.getDepartments());
+  app.get('/api/departments', async (req, res) => {
+    res.json(await db.getDepartments());
   });
 
-  app.post('/api/departments', (req, res) => {
+  app.post('/api/departments', async (req, res) => {
     const { name } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: 'Название отдела обязательно' });
-    const newDept = db.addDepartment({ name: name.trim() });
+    const newDept = await db.addDepartment({ name: name.trim() });
     res.status(201).json(newDept);
   });
 
-  app.put('/api/departments/:id', (req, res) => {
+  app.put('/api/departments/:id', async (req, res) => {
     const { name } = req.body;
-    const updated = db.updateDepartment(req.params.id, { name });
+    const updated = await db.updateDepartment(req.params.id, { name });
     if (!updated) return res.status(404).json({ error: 'Отдел не найден' });
     res.json(updated);
   });
 
-  app.delete('/api/departments/:id', (req, res) => {
-    const success = db.deleteDepartment(req.params.id);
+  app.delete('/api/departments/:id', async (req, res) => {
+    const success = await db.deleteDepartment(req.params.id);
     if (!success) return res.status(404).json({ error: 'Отдел не найден' });
     res.json({ success: true });
   });
 
   // Scanners API
-  app.get('/api/scanners', (req, res) => {
-    res.json(db.getScanners());
+  app.get('/api/scanners', async (req, res) => {
+    res.json(await db.getScanners());
   });
 
-  app.post('/api/scanners', (req, res) => {
+  app.post('/api/scanners', async (req, res) => {
     const { name, type, identifier, location, status } = req.body;
     if (!name || !name.trim()) return res.status(400).json({ error: 'Название сканера обязательно' });
-    const newScanner = db.addScanner({
+    const newScanner = await db.addScanner({
       name: name.trim(),
       type: type || 'usb_keyboard',
       identifier: identifier || 'USB Scanner',
@@ -346,15 +352,15 @@ async function startServer() {
     res.status(201).json(newScanner);
   });
 
-  app.delete('/api/scanners/:id', (req, res) => {
-    const success = db.deleteScanner(req.params.id);
+  app.delete('/api/scanners/:id', async (req, res) => {
+    const success = await db.deleteScanner(req.params.id);
     if (!success) return res.status(404).json({ error: 'Сканер не найден' });
     res.json({ success: true });
   });
 
   // Export employees as CSV
-  app.get('/api/employees/export/csv', (req, res) => {
-    const list = db.getEmployees();
+  app.get('/api/employees/export/csv', async (req, res) => {
+    const list = await db.getEmployees();
     const headers = ['ID', 'Код пропуска', 'ФИО', 'Подразделение', 'Телефон', 'Приборов на руках'];
     const rows = list.map(e => [
       e.id,
@@ -372,9 +378,9 @@ async function startServer() {
   });
 
   // Movements (APPEND-ONLY journal)
-  app.get('/api/movements', (req, res) => {
+  app.get('/api/movements', async (req, res) => {
     const { deviceId, employeeId, action, startDate, endDate } = req.query;
-    const list = db.getMovements({
+    const list = await db.getMovements({
       deviceId: deviceId ? String(deviceId) : undefined,
       employeeId: employeeId ? String(employeeId) : undefined,
       action: action && action !== 'all' ? String(action) : undefined,
@@ -384,8 +390,8 @@ async function startServer() {
     res.json(list);
   });
 
-  app.get('/api/movements/export/csv', (req, res) => {
-    const list = db.getMovements();
+  app.get('/api/movements/export/csv', async (req, res) => {
+    const list = await db.getMovements();
     const headers = ['ID', 'Дата и время', 'Прибор', 'Штрихкод', 'Действие', 'Сотрудник', 'Оператор', 'Плановый возврат', 'Фактический возврат', 'Примечания'];
     const rows = list.map(m => [
       m.id,
@@ -407,36 +413,36 @@ async function startServer() {
   });
 
   // Inventory sessions
-  app.get('/api/inventory/sessions', (req, res) => {
-    res.json(db.getInventorySessions());
+  app.get('/api/inventory/sessions', async (req, res) => {
+    res.json(await db.getInventorySessions());
   });
 
-  app.post('/api/inventory/sessions', (req, res) => {
+  app.post('/api/inventory/sessions', async (req, res) => {
     const { title, operator, notes } = req.body;
-    const session = db.createInventorySession({ title, operator, notes });
+    const session = await db.createInventorySession({ title, operator, notes });
     res.status(201).json(session);
   });
 
-  app.get('/api/inventory/sessions/:id', (req, res) => {
-    const data = db.getInventorySessionById(req.params.id);
+  app.get('/api/inventory/sessions/:id', async (req, res) => {
+    const data = await db.getInventorySessionById(req.params.id);
     if (!data) return res.status(404).json({ error: 'Сессия не найдена' });
     res.json(data);
   });
 
-  app.post('/api/inventory/sessions/:id/scan', (req, res) => {
+  app.post('/api/inventory/sessions/:id/scan', async (req, res) => {
     try {
       const { barcode, operator } = req.body;
-      const result = db.scanInventoryItem(req.params.id, barcode, operator);
+      const result = await db.scanInventoryItem(req.params.id, barcode, operator);
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
     }
   });
 
-  app.post('/api/inventory/sessions/:id/complete', (req, res) => {
+  app.post('/api/inventory/sessions/:id/complete', async (req, res) => {
     try {
       const { operator } = req.body;
-      const result = db.completeInventorySession(req.params.id, operator);
+      const result = await db.completeInventorySession(req.params.id, operator);
       res.json(result);
     } catch (err: any) {
       res.status(400).json({ error: err.message });
@@ -444,20 +450,20 @@ async function startServer() {
   });
 
   // Terminals & Hardware Simulation
-  app.get('/api/terminals', (req, res) => {
-    res.json(db.getTerminals());
+  app.get('/api/terminals', async (req, res) => {
+    res.json(await db.getTerminals());
   });
 
-  app.get('/api/terminal/status', (req, res) => {
-    const terminals = db.getTerminals();
+  app.get('/api/terminal/status', async (req, res) => {
+    const terminals = await db.getTerminals();
     const primary = terminals[0];
     if (!primary) return res.status(404).json({ error: 'Терминал не найден' });
     res.json(primary);
   });
 
-  app.post('/api/terminal/ping', (req, res) => {
-    const settings = db.getSettings();
-    const terminals = db.getTerminals();
+  app.post('/api/terminal/ping', async (req, res) => {
+    const settings = await db.getSettings();
+    const terminals = await db.getTerminals();
     const primary = terminals[0];
 
     const targetIp = req.body.scannerIp || settings.scannerIp || primary?.ip || '192.168.137.100';
@@ -506,16 +512,16 @@ async function startServer() {
   });
 
   // Scanners API (1 to N Scanners)
-  app.get('/api/scanners', (req, res) => {
-    res.json(db.getScanners());
+  app.get('/api/scanners', async (req, res) => {
+    res.json(await db.getScanners());
   });
 
-  app.post('/api/scanners', (req, res) => {
+  app.post('/api/scanners', async (req, res) => {
     const { name, type, identifier, location, status } = req.body;
     if (!name || !identifier) {
       return res.status(400).json({ error: 'Имя и идентификатор сканера обязательны' });
     }
-    const created = db.addScanner({
+    const created = await db.addScanner({
       name: String(name),
       type: type || 'network_scanner',
       identifier: String(identifier),
@@ -525,14 +531,14 @@ async function startServer() {
     res.status(201).json(created);
   });
 
-  app.put('/api/scanners/:id', (req, res) => {
-    const updated = db.updateScanner(req.params.id, req.body);
+  app.put('/api/scanners/:id', async (req, res) => {
+    const updated = await db.updateScanner(req.params.id, req.body);
     if (!updated) return res.status(404).json({ error: 'Сканер не найден' });
     res.json(updated);
   });
 
-  app.delete('/api/scanners/:id', (req, res) => {
-    const ok = db.deleteScanner(req.params.id);
+  app.delete('/api/scanners/:id', async (req, res) => {
+    const ok = await db.deleteScanner(req.params.id);
     if (!ok) return res.status(404).json({ error: 'Сканер не найден' });
     res.json({ success: true });
   });
@@ -541,26 +547,26 @@ async function startServer() {
     res.json(terminalBridge.getPacketLogs());
   });
 
-  app.post('/api/terminal/simulate', (req, res) => {
+  app.post('/api/terminal/simulate', async (req, res) => {
     const { packet, remoteIp } = req.body;
     if (!packet) return res.status(400).json({ error: 'Пакет не передан' });
 
-    const event = terminalBridge.processPacket(String(packet), remoteIp || '127.0.0.1 (UI-Simulator)');
+    const event = await terminalBridge.processPacket(String(packet), remoteIp || '127.0.0.1 (UI-Simulator)');
     res.json({
       success: true,
       processedEvent: event
     });
   });
 
-  app.put('/api/terminals/:id', (req, res) => {
-    const updated = db.updateTerminal(req.params.id, req.body);
+  app.put('/api/terminals/:id', async (req, res) => {
+    const updated = await db.updateTerminal(req.params.id, req.body);
     if (!updated) return res.status(404).json({ error: 'Терминал не найден' });
     res.json(updated);
   });
 
   // Reports
-  app.get('/api/reports/on-hand', (req, res) => {
-    const devices = db.getDevices().filter(d => d.status === 'issued');
+  app.get('/api/reports/on-hand', async (req, res) => {
+    const devices = (await db.getDevices()).filter(d => d.status === 'issued');
     const nowStr = new Date().toISOString().split('T')[0];
     const enriched = devices.map(d => ({
       ...d,
@@ -569,8 +575,8 @@ async function startServer() {
     res.json(enriched);
   });
 
-  app.get('/api/reports/verification-schedule', (req, res) => {
-    const devices = db.getDevices().filter(d => d.status !== 'decommissioned');
+  app.get('/api/reports/verification-schedule', async (req, res) => {
+    const devices = (await db.getDevices()).filter(d => d.status !== 'decommissioned');
     const now = new Date();
     const sorted = devices.map(d => {
       const target = new Date(d.nextVerificationDate).getTime();
@@ -587,29 +593,11 @@ async function startServer() {
   });
 
   // Auth API
-  app.post('/api/auth/login', (req, res) => {
-    const { password, role } = req.body;
-    const cleanPwd = (password || '').trim().toLowerCase();
-    const cleanRole = (role || '').trim().toLowerCase();
-
-    // Check for admin login
-    if (cleanRole === 'admin' || cleanPwd === 'admin') {
-      const user = db.getUsers().find(u => u.role === 'admin') || {
-        id: 'usr-4',
-        username: 'admin',
-        fullName: 'Администратор системы',
-        role: 'admin' as const
-      };
-      return res.json({
-        success: true,
-        user,
-        token: 'admin-session-token'
-      });
-    }
-
-    // Check for metrologist login
-    if (cleanRole === 'metrologist' || cleanPwd === 'metrolog' || cleanPwd === '1234' || cleanPwd === '') {
-      const user = db.getUsers().find(u => u.role === 'metrologist') || {
+  app.post('/api/auth/login', async (req, res) => {
+    const { password } = req.body;
+    const cleanPwd = String(password || '').trim();
+    if (cleanPwd === metrologistPassword.trim()) {
+      const user = (await db.getUsers()).find(u => u.role === 'metrologist') || {
         id: 'usr-2',
         username: 'metrologist',
         fullName: 'Кузнецова Елена Павловна (Метролог ОГМ)',
@@ -618,35 +606,53 @@ async function startServer() {
       return res.json({
         success: true,
         user,
-        token: 'metrolog-session-token'
+        token: metrologistToken
       });
     }
 
-    return res.status(401).json({ success: false, error: 'Неверный пароль. Пароль метролога: metrolog, администратора: admin' });
+    return res.status(401).json({ success: false, error: 'Неверный пароль метролога' });
   });
+
+  app.post('/api/auth/engineering', (req, res) => {
+    if (!engineeringPassword) {
+      return res.status(503).json({ success: false, error: 'Инженерный доступ не настроен на сервере' });
+    }
+    const { combination, password } = req.body;
+    if (combination !== engineeringCombination || password !== engineeringPassword) {
+      return res.status(401).json({ success: false, error: 'Неверная инженерная комбинация или пароль' });
+    }
+    res.json({ success: true, token: engineeringToken });
+  });
+
+  const requireEngineeringAccess = (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    if (req.header('x-engineering-token') !== engineeringToken) {
+      return res.status(403).json({ error: 'Требуется инженерная авторизация' });
+    }
+    next();
+  };
 
   // Settings & Backups
-  app.get('/api/settings', (req, res) => {
-    res.json(db.getSettings());
+  app.get('/api/settings', requireEngineeringAccess, async (req, res) => {
+    res.json(await db.getSettings());
   });
 
-  const saveSettingsHandler = (req: express.Request, res: express.Response) => {
-    const updated = db.updateSettings(req.body);
+  const saveSettingsHandler = async (req: express.Request, res: express.Response) => {
+    const updated = await db.updateSettings(req.body);
     res.json(updated);
   };
-  app.put('/api/settings', saveSettingsHandler);
-  app.post('/api/settings', saveSettingsHandler);
+  app.put('/api/settings', requireEngineeringAccess, saveSettingsHandler);
+  app.post('/api/settings', requireEngineeringAccess, saveSettingsHandler);
 
-  const backupExportHandler = (req: express.Request, res: express.Response) => {
-    const data = db.backupJson();
+  const backupExportHandler = async (req: express.Request, res: express.Response) => {
+    const data = await db.backupJson();
     res.setHeader('Content-Type', 'application/json');
     res.setHeader('Content-Disposition', `attachment; filename="metrology_backup_${new Date().toISOString().split('T')[0]}.json"`);
     res.send(data);
   };
-  app.get('/api/backup/export', backupExportHandler);
-  app.get('/api/database/backup', backupExportHandler);
+  app.get('/api/backup/export', requireEngineeringAccess, backupExportHandler);
+  app.get('/api/database/backup', requireEngineeringAccess, backupExportHandler);
 
-  const backupRestoreHandler = (req: express.Request, res: express.Response) => {
+  const backupRestoreHandler = async (req: express.Request, res: express.Response) => {
     let jsonContent: string | null = null;
     if (typeof req.body === 'string') {
       jsonContent = req.body;
@@ -657,23 +663,23 @@ async function startServer() {
     }
 
     if (!jsonContent) return res.status(400).json({ error: 'Данные бэкапа не переданы или имеют неверный формат' });
-    const success = db.restoreJson(jsonContent);
+    const success = await db.restoreJson(jsonContent);
     if (!success) return res.status(400).json({ error: 'Неверная структура резервной копии' });
     res.json({ success: true, message: 'База данных успешно восстановлена' });
   };
-  app.post('/api/backup/restore', backupRestoreHandler);
-  app.post('/api/database/restore', backupRestoreHandler);
+  app.post('/api/backup/restore', requireEngineeringAccess, backupRestoreHandler);
+  app.post('/api/database/restore', requireEngineeringAccess, backupRestoreHandler);
 
-  const resetSeedHandler = (req: express.Request, res: express.Response) => {
-    const fresh = db.resetToSeed();
+  const resetSeedHandler = async (req: express.Request, res: express.Response) => {
+    await db.resetToSeed();
     res.json({ success: true, message: 'База данных сброшена к исходным эталонным данным' });
   };
-  app.post('/api/backup/reset-seed', resetSeedHandler);
-  app.post('/api/database/reset', resetSeedHandler);
+  app.post('/api/backup/reset-seed', requireEngineeringAccess, resetSeedHandler);
+  app.post('/api/database/reset', requireEngineeringAccess, resetSeedHandler);
 
   // Automated Tests Runner Endpoint
-  app.get('/api/tests/run', (req, res) => {
-    const results = runBusinessRulesTests();
+  app.get('/api/tests/run', async (req, res) => {
+    const results = await runBusinessRulesTests();
     res.json(results);
   });
 
